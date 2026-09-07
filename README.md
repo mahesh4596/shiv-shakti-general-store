@@ -1,8 +1,17 @@
-# Cosmetic Shop - Full Stack Website
+# Shiv Shakti General Store - Full Stack Website
 
-A beautiful and simple cosmetic shopping website built with React, Node.js, Express, and MongoDB.
+A simple and user-friendly grocery shopping website built with React, Node.js, Express, and MongoDB.
+
+## 📱 Android App
+
+Download the latest Android version of Shiv Shakti General Store.
+
+### ⬇️ Download
+
+[Download Shiv Shakti General Store APK](https://github.com/mahesh4596/shiv-shakti-general-store/releases/latest/download/Shiv-Shakti-General-Store.apk)
 
 ## Features
+
 - Home page with product listing
 - Product details
 - Shopping Cart
@@ -12,6 +21,7 @@ A beautiful and simple cosmetic shopping website built with React, Node.js, Expr
 - Order History
 
 ## Tech Stack
+
 - **Frontend:** React, Tailwind CSS, Lucide Icons
 - **Backend:** Node.js, Express
 - **Database:** MongoDB (Mongoose)
@@ -36,9 +46,3 @@ A beautiful and simple cosmetic shopping website built with React, Node.js, Expr
 1. Go to `frontend` folder: `cd frontend`
 2. Install dependencies: `npm install`
 3. Start the development server: `npm run dev`
-
-## Admin Access
-To access the admin panel, you need to manually set `isAdmin: true` for a user in the MongoDB database or update the logic in the code.
-
-## Note
-This project is designed with simplicity in mind, perfect for beginners!
