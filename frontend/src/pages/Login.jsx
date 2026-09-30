@@ -5,6 +5,9 @@ import api from '../api';
 function Login({ setUser }) {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
+    const [code, setCode] = useState('');
+    const [codeSent, setCodeSent] = useState(false);
+    const [loading, setLoading] = useState(false);
     const navigate = useNavigate();
 
     // 🚀 Pre-warm the server to avoid cold starts
@@ -14,6 +17,7 @@ function Login({ setUser }) {
 
     const handleLogin = async (e) => {
         e.preventDefault();
+        setLoading(true);
         try {
             const res = await api.post('/auth/login', { email, password });
             localStorage.setItem('user', JSON.stringify(res.data.user));
@@ -21,7 +25,43 @@ function Login({ setUser }) {
             alert('Login Successful!');
             navigate('/');
         } catch (err) {
-            alert(err.response?.data?.message || 'Login failed');
+            if (err.response?.data?.requiresVerification) {
+                alert(err.response.data.message);
+                setCodeSent(true);
+                // Optionally trigger a resend here if desired, but user can click resend if needed
+            } else {
+                alert(err.response?.data?.message || 'Login failed');
+            }
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const verifyOTP = async (e) => {
+        e.preventDefault();
+        setLoading(true);
+        try {
+            const res = await api.post('/auth/verify-otp', { email, otp: code });
+            alert('Your account is verified! You can now log in.');
+            setCodeSent(false); // Go back to login form
+            setCode('');
+            // We could automatically log them in here, but for simplicity they can just click login again
+        } catch (err) {
+            alert(err.response?.data?.message || 'OTP verification failed');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const resendOTP = async () => {
+        setLoading(true);
+        try {
+            const res = await api.post('/auth/resend-otp', { email });
+            alert(res.data.message);
+        } catch (err) {
+            alert(err.response?.data?.message || 'Failed to resend OTP');
+        } finally {
+            setLoading(false);
         }
     };
 
@@ -56,10 +96,33 @@ function Login({ setUser }) {
                             />
                         </div>
                     </div>
-                    <button type="submit" className="w-full bg-pink-500 text-white py-3.5 md:py-4 rounded-xl md:rounded-2xl font-black text-base md:text-lg shadow-xl shadow-pink-500/20 hover:bg-pink-600 transition-all active:scale-[0.98]">
-                        Sign In
-                    </button>
+                    {!codeSent ? (
+                        <button type="submit" disabled={loading} className="w-full bg-pink-500 text-white py-3.5 md:py-4 rounded-xl md:rounded-2xl font-black text-base md:text-lg shadow-xl shadow-pink-500/20 hover:bg-pink-600 transition-all active:scale-[0.98] disabled:opacity-50">
+                            {loading ? 'Signing In...' : 'Sign In'}
+                        </button>
+                    ) : null}
                 </form>
+
+                {codeSent && (
+                    <form onSubmit={verifyOTP} className="mt-4 space-y-4">
+                        <div className="space-y-2 text-left">
+                            <input
+                                type="text"
+                                required
+                                value={code}
+                                onChange={(e) => setCode(e.target.value)}
+                                placeholder="Enter OTP"
+                                className="w-full p-3.5 md:p-4 rounded-xl border border-pink-50 bg-pink-50/10 focus:ring-2 focus:ring-pink-300 outline-none text-sm md:text-base"
+                            />
+                        </div>
+                        <button type="submit" disabled={loading} className="w-full bg-green-500 text-white py-3 md:py-4 rounded-xl font-black text-base hover:bg-green-600 transition-all shadow-xl shadow-green-500/20 disabled:opacity-50">
+                            {loading ? 'Verifying...' : 'Verify OTP'}
+                        </button>
+                        <button type="button" onClick={resendOTP} disabled={loading} className="w-full text-pink-500 font-bold text-sm mt-2 hover:underline disabled:opacity-50">
+                            Resend OTP
+                        </button>
+                    </form>
+                )}
 
                 <p className="mt-8 md:mt-10 text-center text-xs md:text-sm font-bold text-gray-400">
                     New to the store? <Link to="/signup" className="text-pink-500 hover:underline">Create Account</Link>

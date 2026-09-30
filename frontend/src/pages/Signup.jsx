@@ -45,6 +45,18 @@ function Signup({ setUser }) {
         }
     };
 
+    const resendOTP = async () => {
+        setLoading(true);
+        try {
+            const res = await api.post('/auth/resend-otp', { email });
+            alert(res.data.message);
+        } catch (err) {
+            alert(err.response?.data?.message || 'Failed to resend OTP');
+        } finally {
+            setLoading(false);
+        }
+    };
+
     return (
         <div className="max-w-md mx-auto py-8 md:py-12 px-4 min-h-[70vh] flex flex-col justify-center text-left">
             <div className="bg-white p-6 md:p-10 rounded-[2rem] md:rounded-[2.5rem] border border-pink-50 shadow-sm mb-6 md:mb-0">
@@ -100,9 +112,11 @@ function Signup({ setUser }) {
                         />
                     </div>
 
-                    <button type="submit" disabled={loading} className="w-full bg-pink-500 text-white py-3.5 md:py-4 rounded-xl md:rounded-2xl font-black text-base md:text-lg shadow-xl shadow-pink-500/20 hover:bg-pink-600 transition-all active:scale-[0.98] disabled:opacity-50">
-                        {loading ? 'Creating Account...' : 'Sign Up'}
-                    </button>
+                    {!codeSent ? (
+                        <button type="submit" disabled={loading} className="w-full bg-pink-500 text-white py-3.5 md:py-4 rounded-xl md:rounded-2xl font-black text-base md:text-lg shadow-xl shadow-pink-500/20 hover:bg-pink-600 transition-all active:scale-[0.98] disabled:opacity-50">
+                            {loading ? 'Creating Account...' : 'Sign Up'}
+                        </button>
+                    ) : null}
                 </form>
                 {codeSent && (
                     <form onSubmit={verifyOTP} className="mt-4 space-y-2">
@@ -116,6 +130,9 @@ function Signup({ setUser }) {
                         />
                         <button type="submit" disabled={loading} className="w-full bg-green-500 text-white py-2 rounded-xl font-black hover:bg-green-600 transition-all">
                             {loading ? 'Verifying...' : 'Verify OTP'}
+                        </button>
+                        <button type="button" onClick={resendOTP} disabled={loading} className="w-full text-pink-500 font-bold text-sm mt-2 hover:underline disabled:opacity-50">
+                            Resend OTP
                         </button>
                     </form>
                 )}

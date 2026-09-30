@@ -1,43 +1,52 @@
 const express = require('express');
 const router = express.Router();
 const User = require('../models/User');
-const nodemailer = require('nodemailer');
 const bcrypt = require('bcryptjs');
 const mongoose = require('mongoose');
+const axios = require('axios');
 
-// Presence Check for Env Vars
-if (!process.env.SENDER_EMAIL || !process.env.EMAIL_APP_PASSWORD) {
-    console.warn('⚠️ WARNING: SENDER_EMAIL or EMAIL_APP_PASSWORD is not set. Email verification will fail.');
+// Helper function to send OTP email via Resend HTTPS API
+async function sendOtpEmail(toEmail, otp) {
+    const apiKey = (process.env.RESEND_API_KEY || '').trim();
+    const senderEmail = (process.env.SENDER_EMAIL || 'onboarding@resend.dev').trim();
+
+    if (!apiKey) {
+        throw new Error('RESEND_API_KEY is not configured');
+    }
+
+    const response = await axios.post('https://api.resend.com/emails', {
+        from: `Shiv Shakti Beauty <${senderEmail}>`,
+        to: [toEmail],
+        subject: 'Verify your Shiv Shakti Beauty account 🌸',
+        html: `
+            <div style="font-family: Arial, sans-serif; padding: 20px; max-width: 600px; margin: auto; background-color: #f9f9f9; border-radius: 8px;">
+                <h2 style="color: #ec4899; text-align: center;">Welcome to Shiv Shakti Beauty!</h2>
+                <p>Your one-time verification code is:</p>
+                <div style="background-color: #ffffff; padding: 15px; border-radius: 6px; text-align: center; margin: 20px 0;">
+                    <h1 style="font-size: 36px; letter-spacing: 6px; color: #333; margin: 0;">${otp}</h1>
+                </div>
+                <p style="color: #666; font-size: 14px;">This code is valid for the configured verification period.</p>
+                <p style="color: #888; font-size: 12px; text-align: center; margin-top: 30px;">If you did not create this account, ignore this email.</p>
+            </div>
+        `
+    }, {
+        headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json'
+        },
+        timeout: 10000
+    });
+
+    return response.data;
 }
 
-// Configure Email Transporter
-const transporter = nodemailer.createTransport({
-    service: 'gmail',
-    auth: {
-        user: (process.env.SENDER_EMAIL || '').trim(),
-        pass: (process.env.EMAIL_APP_PASSWORD || '').trim()
-    },
-    debug: true, // Show debug info in logs
-    logger: true, // Log to console
-    connectionTimeout: 5000,
-    greetingTimeout: 5000,
-    socketTimeout: 5000
-});
-
-// Detailed connectivity verification
-transporter.verify((error, success) => {
-    if (error) {
-        console.error('❌ EMAIL ENGINE CRITICAL ERROR:', error.message);
-        console.log('🔍 SYSTEM DEBUG: Use 16-character App Password (not your Gmail password)');
-    } else {
-        console.log('📧 Email Engine [Port 465/SSL] is Active! ✅');
-    }
-});
-
-// 1. Signup Route (Simple)
+// 1. Signup Route
 router.post('/signup', async (req, res) => {
     try {
         let { name, email, password, phone } = req.body;
+        if (!email || !password || !name) {
+            return res.status(400).json({ message: 'Name, email and password are required' });
+        }
         email = email.trim().toLowerCase();
 
         // Check if user already exists
@@ -65,34 +74,20 @@ router.post('/signup', async (req, res) => {
             verificationCode: otp
         });
         await user.save();
-        // Send OTP email (Handle Render SMTP block)
-        let emailSent = false;
-        try {
-            await transporter.sendMail({
-                from: `"Shiv Shakti General Store" <${process.env.SENDER_EMAIL}>`, // Adds a nice sender name
-                to: user.email,
-                subject: 'Your OTP Verification Code 🌸',
-                html: `
-                    <div style="font-family: Arial, sans-serif; padding: 20px; text-align: center;">
-                        <h2 style="color: #ec4899;">Welcome to Shiv Shakti General Store!</h2>
-                        <p>Your one-time verification code is:</p>
-                        <h1 style="font-size: 40px; letter-spacing: 5px; color: #333;">${otp}</h1>
-                        <p style="color: #888;">If you didn't request this, you can safely ignore this email.</p>
-                    </div>
-                `
-            });
 
-            emailSent = true;
+        // Send OTP email via Resend HTTPS API
+        try {
+            await sendOtpEmail(user.email, otp);
         } catch (emailErr) {
-            console.error('Email sending failed (Likely Render SMTP block):', emailErr.message);
+            console.error('❌ Resend Email API error:', emailErr.response?.data || emailErr.message);
+            // Rollback user creation if email fails
+            await User.deleteOne({ _id: user._id });
+            return res.status(500).json({ message: 'Failed to send verification email. Please try again.' });
         }
 
         res.json({ 
-            message: emailSent 
-                ? 'Signup successful! Please verify OTP sent to your email.' 
-                : 'Signup successful! (Email blocked by server, OTP is: ' + otp + ')', 
-            user,
-            otp: emailSent ? undefined : otp // Expose OTP only if email failed
+            message: 'Signup successful! Please check your email for the verification code.',
+            user
         });
     } catch (err) {
         console.error('❌ SIGNUP ERROR:', err);
@@ -100,12 +95,49 @@ router.post('/signup', async (req, res) => {
     }
 });
 
+// 2. Resend OTP Route
+router.post('/resend-otp', async (req, res) => {
+    try {
+        let { email } = req.body;
+        if (!email) {
+            return res.status(400).json({ message: 'Email is required' });
+        }
+        email = email.trim().toLowerCase();
+        const user = await User.findOne({ email });
+        if (!user) {
+            return res.status(400).json({ message: 'User not found' });
+        }
+        if (user.isVerified) {
+            return res.status(400).json({ message: 'User is already verified' });
+        }
 
-// Login with Verification
+        const otp = Math.floor(100000 + Math.random() * 900000).toString();
+        user.verificationCode = otp;
+        await user.save();
+
+        try {
+            await sendOtpEmail(user.email, otp);
+        } catch (emailErr) {
+            console.error('❌ Resend OTP Email error:', emailErr.response?.data || emailErr.message);
+            return res.status(500).json({ message: 'Failed to send verification email. Please try again.' });
+        }
+
+        res.json({ message: 'Verification code sent to your email.' });
+    } catch (err) {
+        console.error('❌ RESEND OTP ERROR:', err);
+        res.status(400).json({ message: 'Error: ' + err.message });
+    }
+});
+
+// 3. Login with Verification
 router.post('/login', async (req, res) => {
     try {
-        const { email, password } = req.body;
-        const user = await User.findOne({ email: email.trim() });
+        let { email, password } = req.body;
+        if (!email || !password) {
+            return res.status(400).json({ message: 'Email and password are required' });
+        }
+        email = email.trim().toLowerCase();
+        const user = await User.findOne({ email });
 
         if (!user) {
             return res.status(400).json({ message: 'Invalid email or password' });
@@ -120,7 +152,7 @@ router.post('/login', async (req, res) => {
             const salt = await bcrypt.genSalt(10);
             user.password = await bcrypt.hash(password, salt);
             await user.save();
-            isMatch = true; // Mark as matched after migration
+            isMatch = true;
         }
 
         if (!isMatch) {
@@ -128,22 +160,23 @@ router.post('/login', async (req, res) => {
         }
 
         // Auto-upgrade to Admin if email matches
-        const isAdminEmail = email.trim().toLowerCase() === (process.env.ADMIN_EMAIL || '').trim().toLowerCase();
+        const isAdminEmail = email === (process.env.ADMIN_EMAIL || '').trim().toLowerCase();
         if (isAdminEmail && !user.isAdmin) {
             user.isAdmin = true;
             await user.save();
         }
 
         if (!user.isVerified) {
-    return res.status(400).json({ message: 'Account not verified. Please verify OTP.' });
-}
-res.json({ message: 'Login success!', user });
+            return res.status(400).json({ message: 'Account not verified. Please verify OTP.', requiresVerification: true, email: user.email });
+        }
+
+        res.json({ message: 'Login success!', user });
     } catch (err) {
         res.status(400).json({ message: 'Error logging in', error: err.message });
     }
 });
 
-// Update Profile with hashing if needed
+// 4. Update Profile
 router.post('/update-profile', async (req, res) => {
     try {
         const { userId, name, phone, password } = req.body;
@@ -165,10 +198,14 @@ router.post('/update-profile', async (req, res) => {
     }
 });
 
-// Verify OTP route
+// 5. Verify OTP route
 router.post('/verify-otp', async (req, res) => {
     try {
-        const { email, otp } = req.body;
+        let { email, otp } = req.body;
+        if (!email || !otp) {
+            return res.status(400).json({ message: 'Email and verification code are required' });
+        }
+        email = email.trim().toLowerCase();
         const user = await User.findOne({ email });
         if (!user) {
             return res.status(400).json({ message: 'User not found' });
@@ -177,9 +214,9 @@ router.post('/verify-otp', async (req, res) => {
             user.isVerified = true;
             user.verificationCode = undefined;
             await user.save();
-            return res.json({ message: 'OTP verified, account activated' });
+            return res.json({ message: 'OTP verified, account activated', user });
         } else {
-            return res.status(400).json({ message: 'Invalid OTP' });
+            return res.status(400).json({ message: 'Incorrect verification code. Please try again.' });
         }
     } catch (err) {
         console.error('OTP verification error:', err);
