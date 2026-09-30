@@ -19,9 +19,9 @@ const transporter = nodemailer.createTransport({
     },
     debug: true, // Show debug info in logs
     logger: true, // Log to console
-    connectionTimeout: 30000,
-    greetingTimeout: 30000,
-    socketTimeout: 60000
+    connectionTimeout: 5000,
+    greetingTimeout: 5000,
+    socketTimeout: 5000
 });
 
 // Detailed connectivity verification
@@ -65,14 +65,35 @@ router.post('/signup', async (req, res) => {
             verificationCode: otp
         });
         await user.save();
-        // Send OTP email
-        await transporter.sendMail({
-            from: process.env.SENDER_EMAIL,
-            to: user.email,
-            subject: 'Your OTP Verification Code',
-            text: `Your OTP code is ${otp}`
+        // Send OTP email (Handle Render SMTP block)
+        let emailSent = false;
+        try {
+            await transporter.sendMail({
+                from: `"Shiv Shakti General Store" <${process.env.SENDER_EMAIL}>`, // Adds a nice sender name
+                to: user.email,
+                subject: 'Your OTP Verification Code 🌸',
+                html: `
+                    <div style="font-family: Arial, sans-serif; padding: 20px; text-align: center;">
+                        <h2 style="color: #ec4899;">Welcome to Shiv Shakti General Store!</h2>
+                        <p>Your one-time verification code is:</p>
+                        <h1 style="font-size: 40px; letter-spacing: 5px; color: #333;">${otp}</h1>
+                        <p style="color: #888;">If you didn't request this, you can safely ignore this email.</p>
+                    </div>
+                `
+            });
+
+            emailSent = true;
+        } catch (emailErr) {
+            console.error('Email sending failed (Likely Render SMTP block):', emailErr.message);
+        }
+
+        res.json({ 
+            message: emailSent 
+                ? 'Signup successful! Please verify OTP sent to your email.' 
+                : 'Signup successful! (Email blocked by server, OTP is: ' + otp + ')', 
+            user,
+            otp: emailSent ? undefined : otp // Expose OTP only if email failed
         });
-        res.json({ message: 'Signup successful! Please verify OTP sent to your email.', user });
     } catch (err) {
         console.error('❌ SIGNUP ERROR:', err);
         res.status(400).json({ message: 'Error: ' + err.message });
