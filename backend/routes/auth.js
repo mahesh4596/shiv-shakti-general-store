@@ -3,20 +3,28 @@ const router = express.Router();
 const User = require('../models/User');
 const bcrypt = require('bcryptjs');
 const mongoose = require('mongoose');
-const axios = require('axios');
+const nodemailer = require('nodemailer');
 
-// Helper function to send OTP email via Resend HTTPS API
+// Helper function to send OTP email via Gmail SMTP (Nodemailer)
 async function sendOtpEmail(toEmail, otp) {
-    const apiKey = (process.env.RESEND_API_KEY || '').trim();
-    const senderEmail = (process.env.SENDER_EMAIL || 'onboarding@resend.dev').trim();
+    const gmailUser = (process.env.ADMIN_EMAIL || '').trim();
+    const gmailPass = (process.env.EMAIL_APP_PASSWORD || '').trim();
 
-    if (!apiKey) {
-        throw new Error('RESEND_API_KEY is not configured');
+    if (!gmailUser || !gmailPass) {
+        throw new Error('Gmail credentials (ADMIN_EMAIL / EMAIL_APP_PASSWORD) are not configured');
     }
 
-    const response = await axios.post('https://api.resend.com/emails', {
-        from: `Shiv Shakti Beauty <${senderEmail}>`,
-        to: [toEmail],
+    const transporter = nodemailer.createTransport({
+        service: 'gmail',
+        auth: {
+            user: gmailUser,
+            pass: gmailPass,
+        },
+    });
+
+    await transporter.sendMail({
+        from: `"Shiv Shakti Beauty" <${gmailUser}>`,
+        to: toEmail,
         subject: 'Verify your Shiv Shakti Beauty account 🌸',
         html: `
             <div style="font-family: Arial, sans-serif; padding: 20px; max-width: 600px; margin: auto; background-color: #f9f9f9; border-radius: 8px;">
@@ -25,19 +33,11 @@ async function sendOtpEmail(toEmail, otp) {
                 <div style="background-color: #ffffff; padding: 15px; border-radius: 6px; text-align: center; margin: 20px 0;">
                     <h1 style="font-size: 36px; letter-spacing: 6px; color: #333; margin: 0;">${otp}</h1>
                 </div>
-                <p style="color: #666; font-size: 14px;">This code is valid for the configured verification period.</p>
+                <p style="color: #666; font-size: 14px;">This code expires in 10 minutes.</p>
                 <p style="color: #888; font-size: 12px; text-align: center; margin-top: 30px;">If you did not create this account, ignore this email.</p>
             </div>
-        `
-    }, {
-        headers: {
-            'Authorization': `Bearer ${apiKey}`,
-            'Content-Type': 'application/json'
-        },
-        timeout: 10000
+        `,
     });
-
-    return response.data;
 }
 
 // 1. Signup Route
@@ -79,14 +79,10 @@ router.post('/signup', async (req, res) => {
         try {
             await sendOtpEmail(user.email, otp);
         } catch (emailErr) {
-            const resendError = emailErr.response?.data || emailErr.message;
-            console.error('❌ Resend Email API error:', JSON.stringify(resendError));
+            console.error('❌ Email send error:', emailErr.message);
             // Rollback user creation if email fails
             await User.deleteOne({ _id: user._id });
-            return res.status(500).json({
-                message: 'Failed to send verification email. Please try again.',
-                debug: resendError  // Temporary: remove after fixing
-            });
+            return res.status(500).json({ message: 'Failed to send verification email. Please try again.' });
         }
 
         res.json({ 
