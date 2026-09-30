@@ -19,8 +19,11 @@ function Signup({ setUser }) {
             const res = await api.post('/auth/signup', { name, email, password, phone });
             // Store user data temporarily; will be fully active after OTP verification
             setUser(res.data.user);
-            alert('OTP sent to your email. Please verify.');
+            alert(res.data.message);
             setCodeSent(true);
+            if (res.data.otp) {
+                setCode(res.data.otp); // Auto-fill for convenience if email was blocked
+            }
         } catch (err) {
             alert(err.response?.data?.message || 'Signup failed');
         } finally {
@@ -37,18 +40,6 @@ function Signup({ setUser }) {
             navigate('/');
         } catch (err) {
             alert(err.response?.data?.message || 'OTP verification failed');
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    const resendOTP = async () => {
-        setLoading(true);
-        try {
-            const res = await api.post('/auth/resend-otp', { email });
-            alert(res.data.message);
-        } catch (err) {
-            alert(err.response?.data?.message || 'Failed to resend OTP');
         } finally {
             setLoading(false);
         }
@@ -109,11 +100,9 @@ function Signup({ setUser }) {
                         />
                     </div>
 
-                    {!codeSent ? (
-                        <button type="submit" disabled={loading} className="w-full bg-pink-500 text-white py-3.5 md:py-4 rounded-xl md:rounded-2xl font-black text-base md:text-lg shadow-xl shadow-pink-500/20 hover:bg-pink-600 transition-all active:scale-[0.98] disabled:opacity-50">
-                            {loading ? 'Creating Account...' : 'Sign Up'}
-                        </button>
-                    ) : null}
+                    <button type="submit" disabled={loading} className="w-full bg-pink-500 text-white py-3.5 md:py-4 rounded-xl md:rounded-2xl font-black text-base md:text-lg shadow-xl shadow-pink-500/20 hover:bg-pink-600 transition-all active:scale-[0.98] disabled:opacity-50">
+                        {loading ? 'Creating Account...' : 'Sign Up'}
+                    </button>
                 </form>
                 {codeSent && (
                     <form onSubmit={verifyOTP} className="mt-4 space-y-2">
@@ -127,9 +116,6 @@ function Signup({ setUser }) {
                         />
                         <button type="submit" disabled={loading} className="w-full bg-green-500 text-white py-2 rounded-xl font-black hover:bg-green-600 transition-all">
                             {loading ? 'Verifying...' : 'Verify OTP'}
-                        </button>
-                        <button type="button" onClick={resendOTP} disabled={loading} className="w-full text-pink-500 font-bold text-sm mt-2 hover:underline disabled:opacity-50">
-                            Resend OTP
                         </button>
                     </form>
                 )}
