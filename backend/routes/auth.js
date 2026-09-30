@@ -79,10 +79,14 @@ router.post('/signup', async (req, res) => {
         try {
             await sendOtpEmail(user.email, otp);
         } catch (emailErr) {
-            console.error('❌ Resend Email API error:', emailErr.response?.data || emailErr.message);
+            const resendError = emailErr.response?.data || emailErr.message;
+            console.error('❌ Resend Email API error:', JSON.stringify(resendError));
             // Rollback user creation if email fails
             await User.deleteOne({ _id: user._id });
-            return res.status(500).json({ message: 'Failed to send verification email. Please try again.' });
+            return res.status(500).json({
+                message: 'Failed to send verification email. Please try again.',
+                debug: resendError  // Temporary: remove after fixing
+            });
         }
 
         res.json({ 
