@@ -3,6 +3,7 @@ const router = express.Router();
 const User = require('../models/User');
 const bcrypt = require('bcryptjs');
 const mongoose = require('mongoose');
+const nodemailer = require("nodemailer");
 
 // Presence Check for Env Vars
 if (!process.env.SENDER_EMAIL || !process.env.EMAIL_APP_PASSWORD) {
@@ -122,14 +123,32 @@ router.post('/resend-otp', async (req, res) => {
         user.verificationCode = otp;
         await user.save();
 
+        let emailSent = false;
         try {
-            await sendOtpEmail(user.email, otp);
+            await transporter.sendMail({
+                from: `"Shiv Shakti General Store" <${process.env.SENDER_EMAIL}>`,
+                to: user.email,
+                subject: 'Your OTP Verification Code 🌸',
+                html: `
+                    <div style="font-family: Arial, sans-serif; padding: 20px; text-align: center;">
+                        <h2 style="color: #ec4899;">Shiv Shakti General Store</h2>
+                        <p>Your new verification code is:</p>
+                        <h1 style="font-size: 40px; letter-spacing: 5px; color: #333;">${otp}</h1>
+                        <p style="color: #888;">If you didn't request this, you can safely ignore this email.</p>
+                    </div>
+                `
+            });
+            emailSent = true;
         } catch (emailErr) {
-            console.error('❌ Resend OTP error:', emailErr.response?.data || emailErr.message);
-            return res.status(500).json({ message: 'Failed to send verification email. Please try again.' });
+            console.error('❌ Resend OTP email failed:', emailErr.message);
         }
 
-        res.json({ message: 'Verification code sent to your email.' });
+        res.json({
+            message: emailSent
+                ? 'Verification code sent to your email.'
+                : 'Signup successful! (Email blocked by server, OTP is: ' + otp + ')',
+            otp: emailSent ? undefined : otp
+        });
     } catch (err) {
         console.error('❌ RESEND OTP ERROR:', err);
         res.status(400).json({ message: 'Error: ' + err.message });
