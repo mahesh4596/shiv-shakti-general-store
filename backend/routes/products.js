@@ -64,7 +64,8 @@ router.post('/', upload.array('imageFiles', 5), async (req, res) => {
         }
 
         if (images.length === 0) {
-            return res.status(400).json({ message: 'Error: At least one image is required.' });
+            // Default placeholder if none provided
+            images.push('https://images.unsplash.com/photo-1522337360788-8b13dee7a37e');
         }
 
         const product = new Product({
@@ -80,6 +81,23 @@ router.post('/', upload.array('imageFiles', 5), async (req, res) => {
     } catch (err) {
         console.error('Multi-Product Add Error:', err);
         res.status(400).json({ message: 'Error: ' + err.message });
+    }
+});
+
+// Update product (Admin)
+router.put('/:id', async (req, res) => {
+    try {
+        const { name, price, description, category, images, image } = req.body;
+        let updateData = { name, price: Number(price) || 0, description, category };
+        if (images && Array.isArray(images) && images.length > 0) {
+            updateData.images = images;
+        } else if (image) {
+            updateData.images = image.split(',').map(u => u.trim()).filter(u => u);
+        }
+        const updatedProduct = await Product.findByIdAndUpdate(req.params.id, updateData, { new: true });
+        res.json({ message: 'Product updated!', product: updatedProduct });
+    } catch (err) {
+        res.status(400).json({ message: 'Error updating product', error: err.message });
     }
 });
 

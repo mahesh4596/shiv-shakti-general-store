@@ -17,12 +17,26 @@ function Signup({ setUser }) {
         setLoading(true);
         try {
             const res = await api.post('/auth/signup', { name, email, password, phone });
-            localStorage.setItem('user', JSON.stringify(res.data.user));
+            // Store user data temporarily; will be fully active after OTP verification
             setUser(res.data.user);
-            alert('Signup Successful! Welcome to Shiv Shakti 🌸');
-            navigate('/');
+            alert('OTP sent to your email. Please verify.');
+            setCodeSent(true);
         } catch (err) {
             alert(err.response?.data?.message || 'Signup failed');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const verifyOTP = async (e) => {
+        e.preventDefault();
+        setLoading(true);
+        try {
+            await api.post('/auth/verify-otp', { email, otp: code });
+            alert('Your account is verified! You can now log in.');
+            navigate('/');
+        } catch (err) {
+            alert(err.response?.data?.message || 'OTP verification failed');
         } finally {
             setLoading(false);
         }
@@ -87,7 +101,21 @@ function Signup({ setUser }) {
                         {loading ? 'Creating Account...' : 'Sign Up'}
                     </button>
                 </form>
-
+                {codeSent && (
+                    <form onSubmit={verifyOTP} className="mt-4 space-y-2">
+                        <input
+                            type="text"
+                            required
+                            value={code}
+                            onChange={(e) => setCode(e.target.value)}
+                            placeholder="Enter OTP"
+                            className="w-full p-3 rounded-xl border border-pink-50 bg-pink-50/10 focus:ring-2 focus:ring-pink-300 outline-none"
+                        />
+                        <button type="submit" disabled={loading} className="w-full bg-green-500 text-white py-2 rounded-xl font-black hover:bg-green-600 transition-all">
+                            {loading ? 'Verifying...' : 'Verify OTP'}
+                        </button>
+                    </form>
+                )}
                 <p className="mt-8 md:mt-10 text-center text-xs md:text-sm font-bold text-gray-400">
                     Already a Customer? <Link to="/login" className="text-pink-500 hover:underline">Sign In</Link>
                 </p>
