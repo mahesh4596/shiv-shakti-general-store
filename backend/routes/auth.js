@@ -3,37 +3,37 @@ const router = express.Router();
 const User = require('../models/User');
 const bcrypt = require('bcryptjs');
 const mongoose = require('mongoose');
-const axios = require('axios');
 
-// Helper: send OTP email via Brevo HTTPS API (works on Render - no SMTP needed)
-async function sendOtpEmail(toEmail, otp) {
-    const apiKey = (process.env.BREVO_API_KEY || '').trim();
-    const senderEmail = (process.env.ADMIN_EMAIL || '').trim();
-
-    if (!apiKey) throw new Error('BREVO_API_KEY is not configured');
-
-    await axios.post('https://api.brevo.com/v3/smtp/email', {
-        sender: { name: 'Shiv Shakti Beauty', email: senderEmail },
-        to: [{ email: toEmail }],
-        subject: 'Verify your Shiv Shakti Beauty account 🌸',
-        htmlContent: `
-            <div style="font-family: Arial, sans-serif; padding: 20px; max-width: 600px; margin: auto; background-color: #f9f9f9; border-radius: 8px;">
-                <h2 style="color: #ec4899; text-align: center;">Welcome to Shiv Shakti Beauty!</h2>
-                <p>Your one-time verification code is:</p>
-                <div style="background-color: #ffffff; padding: 15px; border-radius: 6px; text-align: center; margin: 20px 0;">
-                    <h1 style="font-size: 36px; letter-spacing: 6px; color: #333; margin: 0;">${otp}</h1>
-                </div>
-                <p style="color: #666; font-size: 14px;">This code expires in 10 minutes.</p>
-                <p style="color: #888; font-size: 12px; text-align: center; margin-top: 30px;">If you did not create this account, ignore this email.</p>
-            </div>
-        `,
-    }, {
-        headers: { 'api-key': apiKey, 'Content-Type': 'application/json' },
-        timeout: 10000,
-    });
+// Presence Check for Env Vars
+if (!process.env.SENDER_EMAIL || !process.env.EMAIL_APP_PASSWORD) {
+    console.warn('⚠️ WARNING: SENDER_EMAIL or EMAIL_APP_PASSWORD is not set. Email verification will fail.');
 }
 
-// 1. Signup Route
+// Configure Email Transporter
+const transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+        user: (process.env.SENDER_EMAIL || '').trim(),
+        pass: (process.env.EMAIL_APP_PASSWORD || '').trim()
+    },
+    debug: true, // Show debug info in logs
+    logger: true, // Log to console
+    connectionTimeout: 5000,
+    greetingTimeout: 5000,
+    socketTimeout: 5000
+});
+
+// Detailed connectivity verification
+transporter.verify((error, success) => {
+    if (error) {
+        console.error('❌ EMAIL ENGINE CRITICAL ERROR:', error.message);
+        console.log('🔍 SYSTEM DEBUG: Use 16-character App Password (not your Gmail password)');
+    } else {
+        console.log('📧 Email Engine [Port 465/SSL] is Active! ✅');
+    }
+});
+
+// 1. Signup Route (Simple)
 router.post('/signup', async (req, res) => {
     try {
         let { name, email, password, phone } = req.body;
@@ -67,19 +67,34 @@ router.post('/signup', async (req, res) => {
             verificationCode: otp
         });
         await user.save();
-
-        // Send OTP email via Brevo
+        // Send OTP email (Handle Render SMTP block)
+        let emailSent = false;
         try {
-            await sendOtpEmail(user.email, otp);
+            await transporter.sendMail({
+                from: `"Shiv Shakti General Store" <${process.env.SENDER_EMAIL}>`, // Adds a nice sender name
+                to: user.email,
+                subject: 'Your OTP Verification Code 🌸',
+                html: `
+                    <div style="font-family: Arial, sans-serif; padding: 20px; text-align: center;">
+                        <h2 style="color: #ec4899;">Welcome to Shiv Shakti General Store!</h2>
+                        <p>Your one-time verification code is:</p>
+                        <h1 style="font-size: 40px; letter-spacing: 5px; color: #333;">${otp}</h1>
+                        <p style="color: #888;">If you didn't request this, you can safely ignore this email.</p>
+                    </div>
+                `
+            });
+
+            emailSent = true;
         } catch (emailErr) {
-            console.error('❌ Brevo Email error:', emailErr.response?.data || emailErr.message);
-            await User.deleteOne({ _id: user._id });
-            return res.status(500).json({ message: 'Failed to send verification email. Please try again.' });
+            console.error('Email sending failed (Likely Render SMTP block):', emailErr.message);
         }
 
-        res.json({
-            message: 'Signup successful! Please check your email for the verification code.',
-            user
+        res.json({ 
+            message: emailSent 
+                ? 'Signup successful! Please verify OTP sent to your email.' 
+                : 'Signup successful! (Email blocked by server, OTP is: ' + otp + ')', 
+            user,
+            otp: emailSent ? undefined : otp // Expose OTP only if email failed
         });
     } catch (err) {
         console.error('❌ SIGNUP ERROR:', err);

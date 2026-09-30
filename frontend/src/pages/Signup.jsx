@@ -19,11 +19,8 @@ function Signup({ setUser }) {
             const res = await api.post('/auth/signup', { name, email, password, phone });
             // Store user data temporarily; will be fully active after OTP verification
             setUser(res.data.user);
-            alert(res.data.message);
+            alert('OTP sent to your email. Please verify.');
             setCodeSent(true);
-            if (res.data.otp) {
-                setCode(res.data.otp); // Auto-fill for convenience if email was blocked
-            }
         } catch (err) {
             alert(err.response?.data?.message || 'Signup failed');
         } finally {
