@@ -4,38 +4,120 @@ const User = require('../models/User');
 const bcrypt = require('bcryptjs');
 const mongoose = require('mongoose');
 const axios = require('axios');
+const { OAuth2Client } = require('google-auth-library');
 
-// Helper function to send OTP email via Resend HTTPS API
+// Configure OAuth2 Client for Gmail API over HTTPS
+const oAuth2Client = new OAuth2Client(
+    process.env.GMAIL_CLIENT_ID,
+    process.env.GMAIL_CLIENT_SECRET
+);
+
+// Helper function to send OTP email via Gmail API over HTTPS
 async function sendOtpEmail(toEmail, otp) {
-    const apiKey = (process.env.RESEND_API_KEY || '').trim();
-    const senderEmail = (process.env.SENDER_EMAIL || 'onboarding@resend.dev').trim();
+    const clientId = (process.env.GMAIL_CLIENT_ID || '').trim();
+    const clientSecret = (process.env.GMAIL_CLIENT_SECRET || '').trim();
+    const refreshToken = (process.env.GMAIL_REFRESH_TOKEN || '').trim();
+    const senderEmail = (process.env.SENDER_EMAIL || process.env.GMAIL_USER || '').trim();
 
-    if (!apiKey) {
-        throw new Error('RESEND_API_KEY is not configured');
+    if (!clientId || !clientSecret || !refreshToken || !senderEmail) {
+        throw new Error('Gmail OAuth credentials (GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REFRESH_TOKEN, SENDER_EMAIL) are not configured');
     }
 
-    const response = await axios.post('https://api.resend.com/emails', {
-        from: `Shiv Shakti Beauty <${senderEmail}>`,
-        to: [toEmail],
-        subject: 'Verify your Shiv Shakti Beauty account 🌸',
-        html: `
-            <div style="font-family: Arial, sans-serif; padding: 20px; max-width: 600px; margin: auto; background-color: #f9f9f9; border-radius: 8px;">
-                <h2 style="color: #ec4899; text-align: center;">Welcome to Shiv Shakti Beauty!</h2>
-                <p>Your one-time verification code is:</p>
-                <div style="background-color: #ffffff; padding: 15px; border-radius: 6px; text-align: center; margin: 20px 0;">
-                    <h1 style="font-size: 36px; letter-spacing: 6px; color: #333; margin: 0;">${otp}</h1>
+    oAuth2Client.setCredentials({ refresh_token: refreshToken });
+    const { token: accessToken } = await oAuth2Client.getAccessToken();
+    if (!accessToken) {
+        throw new Error('Failed to retrieve Gmail OAuth access token');
+    }
+
+    const subject = 'Your OTP Verification Code';
+    const utf8Subject = `=?utf-8?B?${Buffer.from(subject).toString('base64')}?=`;
+    const messageParts = [
+        `From: Shiv Shakti General Store <${senderEmail}>`,
+        `To: ${toEmail}`,
+        `Subject: ${utf8Subject}`,
+        `MIME-Version: 1.0`,
+        `Content-Type: text/html; charset=utf-8`,
+        ``,
+        `
+            <div style="
+                margin:0;
+                padding:40px 15px;
+                background-color:#1b1d26;
+                font-family:Arial,Helvetica,sans-serif;
+            ">
+
+                <div style="
+                    max-width:600px;
+                    margin:0 auto;
+                    background-color:#0d111b;
+                    border-radius:20px;
+                    padding:45px 30px 50px 30px;
+                    text-align:center;
+                ">
+
+                    <h1 style="
+                        margin:0 0 35px 0;
+                        color:#ff1493;
+                        font-size:30px;
+                        line-height:1.25;
+                        font-weight:700;
+                    ">
+                        Welcome to Shiv Shakti<br>
+                        General Store!
+                    </h1>
+
+                    <p style="
+                        margin:0 0 28px 0;
+                        color:#eeeeee;
+                        font-size:17px;
+                        line-height:1.6;
+                    ">
+                        Your one-time verification code is:
+                    </p>
+
+                    <div style="
+                        color:#f4f4f4;
+                        font-size:46px;
+                        line-height:1;
+                        font-weight:700;
+                        letter-spacing:12px;
+                        margin:25px 0 45px 12px;
+                    ">
+                        ${otp}
+                    </div>
+
+                    <p style="
+                        margin:0;
+                        color:#8c8f99;
+                        font-size:16px;
+                        line-height:1.5;
+                    ">
+                        If you didn't request this,<br>
+                        you can safely ignore this email.
+                    </p>
+
                 </div>
-                <p style="color: #666; font-size: 14px;">This code is valid for the configured verification period.</p>
-                <p style="color: #888; font-size: 12px; text-align: center; margin-top: 30px;">If you did not create this account, ignore this email.</p>
             </div>
         `
-    }, {
-        headers: {
-            'Authorization': `Bearer ${apiKey}`,
-            'Content-Type': 'application/json'
-        },
-        timeout: 10000
-    });
+    ];
+    const message = messageParts.join('\r\n');
+    const encodedMessage = Buffer.from(message)
+        .toString('base64')
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+        .replace(/=+$/, '');
+
+    const response = await axios.post(
+        `https://gmail.googleapis.com/gmail/v1/users/me/messages/send`,
+        { raw: encodedMessage },
+        {
+            headers: {
+                'Authorization': `Bearer ${accessToken}`,
+                'Content-Type': 'application/json'
+            },
+            timeout: 10000
+        }
+    );
 
     return response.data;
 }
@@ -75,11 +157,11 @@ router.post('/signup', async (req, res) => {
         });
         await user.save();
 
-        // Send OTP email via Resend HTTPS API
+        // Send OTP email via Gmail API over HTTPS
         try {
             await sendOtpEmail(user.email, otp);
         } catch (emailErr) {
-            console.error('❌ Resend Email API error:', emailErr.response?.data || emailErr.message);
+            console.error('❌ Gmail API Email error:', emailErr.response?.data || emailErr.message);
             // Rollback user creation if email fails
             await User.deleteOne({ _id: user._id });
             return res.status(500).json({ message: 'Failed to send verification email. Please try again.' });
@@ -118,13 +200,13 @@ router.post('/resend-otp', async (req, res) => {
         try {
             await sendOtpEmail(user.email, otp);
         } catch (emailErr) {
-            console.error('❌ Resend OTP Email error:', emailErr.response?.data || emailErr.message);
+            console.error('❌ Gmail API OTP Email error:', emailErr.response?.data || emailErr.message);
             return res.status(500).json({ message: 'Failed to send verification email. Please try again.' });
         }
 
         res.json({ message: 'Verification code sent to your email.' });
     } catch (err) {
-        console.error('❌ RESEND OTP ERROR:', err);
+        console.error('❌ GMAIL API OTP ERROR:', err);
         res.status(400).json({ message: 'Error: ' + err.message });
     }
 });
