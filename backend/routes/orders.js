@@ -2,35 +2,45 @@ const express = require('express');
 const router = express.Router();
 const Order = require('../models/Order');
 const User = require('../models/User');
-const nodemailer = require('nodemailer');
-const axios = require('axios'); // For Telegram
+const axios = require('axios');
 
+// Helper: send admin order alert via Brevo HTTPS API (works on Render - no SMTP)
+async function sendOrderAlertEmail(order) {
+    const apiKey = (process.env.BREVO_API_KEY || '').trim();
+    const adminEmail = (process.env.ADMIN_EMAIL || '').trim();
 
-// Configure Email Transporter
-const transporter = nodemailer.createTransport({
-    host: 'smtp.gmail.com',
-    port: 587,
-    secure: false, // STARTTLS
-    auth: {
-        user: (process.env.SENDER_EMAIL || '').trim(),
-        pass: (process.env.EMAIL_APP_PASSWORD || '').trim()
-    },
-    tls: {
-        rejectUnauthorized: false,
-        minVersion: "TLSv1.2"
-    },
-    connectionTimeout: 30000,
-    greetingTimeout: 30000,
-    socketTimeout: 45000
-});
-
-transporter.verify((error, success) => {
-    if (error) {
-        console.error('❌ ORDER EMAIL ERROR:', error.message);
-    } else {
-        console.log('📧 Order Email Engine [Port 465/SSL] is Active! ✅');
+    if (!apiKey || !adminEmail) {
+        console.log('⚠️ EMAIL SKIPPED: BREVO_API_KEY or ADMIN_EMAIL not set');
+        return;
     }
-});
+
+    await axios.post('https://api.brevo.com/v3/smtp/email', {
+        sender: { name: 'Shiv Shakti Bot', email: adminEmail },
+        to: [{ email: adminEmail }],
+        subject: `🚨 NEW ORDER: #${order._id.toString().slice(-6)}`,
+        htmlContent: `
+            <div style="font-family: sans-serif; padding: 20px; border: 1px solid #ff0080; border-radius: 20px;">
+                <h1 style="color: #ff0080;">Shiv Shakti Store Alert! 🌸</h1>
+                <p>Hello Admin, a new order has been placed!</p>
+                <hr/>
+                <p><strong>Order ID:</strong> #${order._id}</p>
+                <p><strong>Customer:</strong> ${order.user?.name || 'N/A'}</p>
+                <p><strong>Phone:</strong> ${order.phone || 'N/A'}</p>
+                <p><strong>Total Amount:</strong> ₹${order.totalAmount}</p>
+                <p><strong>Shipping Address:</strong> ${order.address}</p>
+                <hr/>
+                <p><strong>Items:</strong></p>
+                <ul>
+                    ${order.items.map(i => `<li>${i.name} (x${i.quantity}) - ₹${i.price}</li>`).join('')}
+                </ul>
+                <p style="color: #888; font-size: 10px;">Check your Boutique Console for full order details.</p>
+            </div>
+        `,
+    }, {
+        headers: { 'api-key': apiKey, 'Content-Type': 'application/json' },
+        timeout: 10000,
+    });
+}
 
 // Create order
 router.post('/', async (req, res) => {
@@ -41,7 +51,7 @@ router.post('/', async (req, res) => {
         // Fetch full document with populated user for reliable logs
         const fullOrder = await Order.findById(order._id).populate('user');
 
-        // --- STEP 1: BRAIN-FRIENDLY TERMINAL LOG (Detailed) ---
+        // --- STEP 1: TERMINAL LOG ---
         console.log('\n\n--- 🌸 NEW ORDER ALERT 🌸 ---');
         console.log(`🆔 Order ID: ${fullOrder._id}`);
         console.log(`👤 Customer: ${fullOrder.user?.name || 'Walk-in'} (${fullOrder.user?.email || 'N/A'})`);
@@ -71,42 +81,10 @@ router.post('/', async (req, res) => {
             });
         }
 
-        // --- STEP 3: EMAIL NOTIFICATION ---
-        if (process.env.EMAIL_APP_PASSWORD && process.env.EMAIL_APP_PASSWORD !== 'your_gmail_app_password_here') {
-
-            const mailOptions = {
-                from: `"SHIV SHAKTI BOT" <${process.env.SENDER_EMAIL}>`,
-                to: process.env.ADMIN_EMAIL, // The email that RECEIVES the alert
-                subject: `🚨 NEW ORDER RECEIVED: #${fullOrder._id.toString().slice(-6)}`,
-                html: `
-                    <div style="font-family: sans-serif; padding: 20px; border: 1px solid #ff0080; border-radius: 20px;">
-                        <h1 style="color: #ff0080;">Shiv Shakti Store Alert! 🌸</h1>
-                        <p>Hello Admin, a new masterpiece has been ordered!</p>
-                        <hr/>
-                        <p><strong>Order ID:</strong> #${fullOrder._id}</p>
-                        <p><strong>Customer Name:</strong> ${fullOrder.user?.name || 'N/A'}</p>
-                        <p><strong>Phone:</strong> ${fullOrder.phone || 'N/A'}</p>
-                        <p><strong>Total Amount:</strong> ₹${fullOrder.totalAmount}</p>
-                        <p><strong>Shipping Address:</strong> ${fullOrder.address}</p>
-                        <hr/>
-                        <p style="color: #888; font-size: 10px;">Check your Boutique Console for full order details.</p>
-                    </div>
-                `
-            };
-
-
-
-            transporter.sendMail(mailOptions, (error, info) => {
-                if (error) {
-                    console.error('❌ EMAIL ERROR:', error.message);
-                    console.log('💡 TIP: Make sure you use a 16-character "App Password", not your normal Gmail password.');
-                } else {
-                    console.log('📧 Admin notified via Email! ✅');
-                }
-            });
-        } else {
-            console.log('⚠️ EMAIL SKIPPED: EMAIL_APP_PASSWORD is not set in .env');
-        }
+        // --- STEP 3: EMAIL NOTIFICATION via Brevo ---
+        sendOrderAlertEmail(fullOrder)
+            .then(() => console.log('📧 Admin notified via Email! ✅'))
+            .catch(err => console.error('❌ EMAIL ERROR:', err.response?.data || err.message));
 
         res.json({ message: 'Order created!', order });
     } catch (err) {

@@ -3,30 +3,20 @@ const router = express.Router();
 const User = require('../models/User');
 const bcrypt = require('bcryptjs');
 const mongoose = require('mongoose');
-const nodemailer = require('nodemailer');
+const axios = require('axios');
 
-// Helper function to send OTP email via Gmail SMTP (Nodemailer)
+// Helper: send OTP email via Brevo HTTPS API (works on Render - no SMTP needed)
 async function sendOtpEmail(toEmail, otp) {
-    const gmailUser = (process.env.ADMIN_EMAIL || '').trim();
-    const gmailPass = (process.env.EMAIL_APP_PASSWORD || '').trim();
+    const apiKey = (process.env.BREVO_API_KEY || '').trim();
+    const senderEmail = (process.env.ADMIN_EMAIL || '').trim();
 
-    if (!gmailUser || !gmailPass) {
-        throw new Error('Gmail credentials (ADMIN_EMAIL / EMAIL_APP_PASSWORD) are not configured');
-    }
+    if (!apiKey) throw new Error('BREVO_API_KEY is not configured');
 
-    const transporter = nodemailer.createTransport({
-        service: 'gmail',
-        auth: {
-            user: gmailUser,
-            pass: gmailPass,
-        },
-    });
-
-    await transporter.sendMail({
-        from: `"Shiv Shakti Beauty" <${gmailUser}>`,
-        to: toEmail,
+    await axios.post('https://api.brevo.com/v3/smtp/email', {
+        sender: { name: 'Shiv Shakti Beauty', email: senderEmail },
+        to: [{ email: toEmail }],
         subject: 'Verify your Shiv Shakti Beauty account 🌸',
-        html: `
+        htmlContent: `
             <div style="font-family: Arial, sans-serif; padding: 20px; max-width: 600px; margin: auto; background-color: #f9f9f9; border-radius: 8px;">
                 <h2 style="color: #ec4899; text-align: center;">Welcome to Shiv Shakti Beauty!</h2>
                 <p>Your one-time verification code is:</p>
@@ -37,6 +27,9 @@ async function sendOtpEmail(toEmail, otp) {
                 <p style="color: #888; font-size: 12px; text-align: center; margin-top: 30px;">If you did not create this account, ignore this email.</p>
             </div>
         `,
+    }, {
+        headers: { 'api-key': apiKey, 'Content-Type': 'application/json' },
+        timeout: 10000,
     });
 }
 
@@ -75,17 +68,16 @@ router.post('/signup', async (req, res) => {
         });
         await user.save();
 
-        // Send OTP email via Resend HTTPS API
+        // Send OTP email via Brevo
         try {
             await sendOtpEmail(user.email, otp);
         } catch (emailErr) {
-            console.error('❌ Email send error:', emailErr.message);
-            // Rollback user creation if email fails
+            console.error('❌ Brevo Email error:', emailErr.response?.data || emailErr.message);
             await User.deleteOne({ _id: user._id });
             return res.status(500).json({ message: 'Failed to send verification email. Please try again.' });
         }
 
-        res.json({ 
+        res.json({
             message: 'Signup successful! Please check your email for the verification code.',
             user
         });
@@ -118,7 +110,7 @@ router.post('/resend-otp', async (req, res) => {
         try {
             await sendOtpEmail(user.email, otp);
         } catch (emailErr) {
-            console.error('❌ Resend OTP Email error:', emailErr.response?.data || emailErr.message);
+            console.error('❌ Resend OTP error:', emailErr.response?.data || emailErr.message);
             return res.status(500).json({ message: 'Failed to send verification email. Please try again.' });
         }
 
@@ -129,7 +121,7 @@ router.post('/resend-otp', async (req, res) => {
     }
 });
 
-// 3. Login with Verification
+// 3. Login
 router.post('/login', async (req, res) => {
     try {
         let { email, password } = req.body;
@@ -146,7 +138,7 @@ router.post('/login', async (req, res) => {
         // Check password
         let isMatch = await bcrypt.compare(password, user.password);
 
-        // MIGRATION: If not a hashed match, check if it's an old plain-text password
+        // MIGRATION: handle old plain-text passwords
         if (!isMatch && password === user.password) {
             console.log('Migrating old plain-text password for:', user.email);
             const salt = await bcrypt.genSalt(10);
@@ -167,7 +159,11 @@ router.post('/login', async (req, res) => {
         }
 
         if (!user.isVerified) {
-            return res.status(400).json({ message: 'Account not verified. Please verify OTP.', requiresVerification: true, email: user.email });
+            return res.status(400).json({
+                message: 'Account not verified. Please verify OTP.',
+                requiresVerification: true,
+                email: user.email
+            });
         }
 
         res.json({ message: 'Login success!', user });
@@ -198,7 +194,7 @@ router.post('/update-profile', async (req, res) => {
     }
 });
 
-// 5. Verify OTP route
+// 5. Verify OTP
 router.post('/verify-otp', async (req, res) => {
     try {
         let { email, otp } = req.body;
